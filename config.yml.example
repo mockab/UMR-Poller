@@ -1,0 +1,19 @@
+---
+# UMR Poller config file
+# routers:
+#   - Name: Three         - Nme of target (for logging)
+#     ipAddr: 172.16.31.1 - Internal IP Address of target
+#     password: Astr0path - Web UI Password for targer
+#     freq: 10            - Rate to poll target at in seconds
+global:
+  sslWarnDisable: True # Change to True to disable InsecureRequestWarning from urllib3
+  gpsdEnable: False # Change to false to disable gpsd connection
+  maxWorkerThreads: 3 # Set maximum number of threads for polling UMR targets, default 3
+  schedule: 15 # Seconds to wait between each polling attempt
+routers:
+  - name: SiteName
+    ipAddr: 10.69.64.254
+    password: S3cur3P@ssword
+    freq: 10
+    SSLVerify: False
+...

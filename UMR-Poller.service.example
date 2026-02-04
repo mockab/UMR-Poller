@@ -1,0 +1,11 @@
+[Unit]
+Description=UMR-Poller to log UMR router 4g signal levels
+
+[Service]
+Restart=always
+User=mockab
+WorkingDirectory=/home/mockab/UMR-Poller
+ExecStart=/usr/bin/python3 /home/mockab/UMR-Poller/UMR-poller.py
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+dash
+pandas
+plotly
+numpy
+requests
+pyyaml
+schedule
+gpsd-py3
+csv-logger
+pytz

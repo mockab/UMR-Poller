@@ -1,0 +1,70 @@
+import dash
+from dash import dcc, html, Input, Output
+import pandas as pd
+import plotly.graph_objs as go
+import numpy as np
+
+app = dash.Dash(__name__)
+
+app.layout = html.Div([
+    html.H1("LTE Signal Monitor", style={'textAlign': 'center', 'color': '#FFFFFF'}),
+    
+    # Status Indicator Box
+    html.Div(id='status-indicator', style={
+        'textAlign': 'center', 
+        'padding': '20px', 
+        'fontSize': '24px', 
+        'fontWeight': 'bold',
+        'marginBottom': '20px',
+        'borderRadius': '10px'
+    }),
+    
+    dcc.Graph(id='rsrp-graph'),
+    dcc.Graph(id='latency-graph'),
+    
+    dcc.Interval(id='interval-component', interval=2000, n_intervals=0)
+], style={'backgroundColor': '#111111', 'padding': '20px'})
+
+@app.callback(
+    [Output('status-indicator', 'children'),
+     Output('status-indicator', 'style'),
+     Output('rsrp-graph', 'figure'),
+     Output('latency-graph', 'figure')],
+    [Input('interval-component', 'n_intervals')]
+)
+def update_dashboard(n):
+    # Load data
+    df = pd.read_csv('output.csv') 
+    
+    # Clean data: convert 'n/a' to NaN
+    df = df.replace('n/a', np.nan)
+    
+    # Get the latest state for the indicator
+    latest_row = df.iloc[-1]
+    lte_state = str(latest_row['Athol.InfoHighDump.lte_state'])
+    
+    if lte_state == '4':
+        status_text = "CONNECTION ACTIVE (State 4)"
+        status_style = {'backgroundColor': '#2ECC71', 'color': 'white'} # Green
+    else:
+        status_text = "SIGNAL LOST / SEARCHING"
+        status_style = {'backgroundColor': '#E74C3C', 'color': 'white'} # Red
+
+    # Convert columns to numeric for plotting
+    df['rsrp'] = pd.to_numeric(df['Athol.InfoHighDump.rsrp'], errors='coerce')
+    df['latency'] = pd.to_numeric(df['Athol.InfoHighDump.latency_max_ms'], errors='coerce')
+    df['time'] = pd.to_datetime(df['Systemdate'])
+
+    # RSRP Chart
+    rsrp_fig = go.Figure(go.Scatter(x=df['time'], y=df['rsrp'], mode='lines+markers', name='RSRP'))
+    rsrp_fig.update_layout(title="Signal Strength (RSRP)", template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20))
+
+    # Latency Chart
+    lat_fig = go.Figure(go.Scatter(x=df['time'], y=df['latency'], mode='lines', name='Latency', line=dict(color='#FFA500')))
+    lat_fig.update_layout(title="Max Latency (ms)", template="plotly_dark", margin=dict(l=20, r=20, t=40, b=20))
+
+    return status_text, {**status_style, 'textAlign': 'center', 'padding': '20px', 'borderRadius': '10px'}, rsrp_fig, lat_fig
+
+if __name__ == '__main__':
+    # The updated line:
+    app.run(host='0.0.0.0', port=8050, debug=False)

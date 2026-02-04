@@ -1,0 +1,6 @@
+config.yml
+logs/
+notes/
+__pycache__/
+/.DS_Store
+output.csv

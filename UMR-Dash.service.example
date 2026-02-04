@@ -1,0 +1,11 @@
+[Unit]
+Description=UMR-Dash view logs from UMR router 4g signal levels
+
+[Service]
+Restart=always
+User=mockab
+WorkingDirectory=/home/mockab/UMR-Poller/output
+ExecStart=/usr/bin/python3 /home/mockab/UMR-Poller/output/app.py
+
+[Install]
+WantedBy=multi-user.target

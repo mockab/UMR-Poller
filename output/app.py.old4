@@ -1,0 +1,125 @@
+import dash
+from dash import dcc, html, Input, Output, dash_table
+import pandas as pd
+import plotly.graph_objs as go
+import numpy as np
+from datetime import datetime, timedelta
+
+app = dash.Dash(__name__)
+
+# Reference Table Data
+threshold_data = [
+    {"Metric": "RSSI", "Excellent": "> -60", "Good": "-70 to -60", "Weak": "-80 to -70", "Poor": "< -80"},
+    {"Metric": "RSRP", "Excellent": "> -80", "Good": "-90 to -80", "Weak": "-100 to -90", "Poor": "< -100"},
+    {"Metric": "RSRQ", "Excellent": "> -5", "Good": "-10 to -5", "Weak": "-15 to -10", "Poor": "< -15"},
+]
+
+def get_metric_health(val, metric):
+    if pd.isna(val): return "N/A", "#7f8c8d"
+    
+    thresholds = {
+        'rsrp': [(-80, "Excellent", "#2ecc71"), (-90, "Good", "#27ae60"), (-100, "Weak", "#f1c40f")],
+        'rssi': [(-60, "Excellent", "#2ecc71"), (-70, "Good", "#27ae60"), (-80, "Weak", "#f1c40f")],
+        'rsrq': [(-5, "Excellent", "#2ecc71"), (-10, "Good", "#27ae60"), (-15, "Weak", "#f1c40f")]
+    }
+    
+    for limit, label, color in thresholds[metric]:
+        if val > limit: return label, color
+    return "Poor", "#e74c3c"
+
+app.layout = html.Div([
+    html.H1("Advanced LTE Monitor", style={'textAlign': 'center', 'color': 'white'}),
+
+    # TIME FILTER SWITCH
+    html.Div([
+        html.Label("View History:", style={'color': 'white', 'marginRight': '15px'}),
+        dcc.RadioItems(
+            id='time-filter',
+            options=[
+                {'label': '1 Hour', 'value': '1H'},
+                {'label': '1 Day', 'value': '1D'},
+                {'label': '1 Week', 'value': '1W'},
+                {'label': 'All Time', 'value': 'ALL'}
+            ],
+            value='ALL',
+            inline=True,
+            style={'color': 'white'},
+            labelStyle={'marginRight': '15px'}
+        )
+    ], style={'textAlign': 'center', 'marginBottom': '20px'}),
+
+    # TRIPLE HEALTH CARDS
+    html.Div([
+        html.Div(id='rssi-card', style={'flex': '1', 'margin': '5px'}),
+        html.Div(id='rsrp-card', style={'flex': '1', 'margin': '5px'}),
+        html.Div(id='rsrq-card', style={'flex': '1', 'margin': '5px'}),
+    ], style={'display': 'flex', 'flexWrap': 'wrap'}),
+
+    # THRESHOLD REFERENCE TABLE
+    html.Div([
+        dash_table.DataTable(
+            data=threshold_data,
+            columns=[{"name": i, "id": i} for i in threshold_data[0].keys()],
+            style_as_list_view=True,
+            style_header={'backgroundColor': '#1a1a1a', 'color': 'white', 'fontWeight': 'bold'},
+            style_cell={'backgroundColor': '#2c3e50', 'color': 'white', 'textAlign': 'center'}
+        )
+    ], style={'margin': '10px', 'borderRadius': '10px', 'overflow': 'hidden'}),
+
+    dcc.Graph(id='rf-metrics-graph'),
+    dcc.Graph(id='quality-graph'),
+    
+    dcc.Interval(id='interval-component', interval=2000, n_intervals=0)
+], style={'backgroundColor': '#111111', 'minHeight': '100vh', 'padding': '20px'})
+
+@app.callback(
+    [Output('rssi-card', 'children'), Output('rssi-card', 'style'),
+     Output('rsrp-card', 'children'), Output('rsrp-card', 'style'),
+     Output('rsrq-card', 'children'), Output('rsrq-card', 'style'),
+     Output('rf-metrics-graph', 'figure'),
+     Output('quality-graph', 'figure')],
+    [Input('interval-component', 'n_intervals'),
+     Input('time-filter', 'value')]
+)
+def update_dashboard(n, time_range):
+    df = pd.read_csv('output.csv').replace('n/a', np.nan)
+    df['time'] = pd.to_datetime(df['Systemdate'])
+    
+    # FILTER DATA BASED ON SWITCH
+    now = df['time'].max()
+    if time_range == '1H':
+        df = df[df['time'] > now - timedelta(hours=1)]
+    elif time_range == '1D':
+        df = df[df['time'] > now - timedelta(days=1)]
+    elif time_range == '1W':
+        df = df[df['time'] > now - timedelta(weeks=1)]
+
+    latest = df.iloc[-1]
+    
+    # Process Metrics
+    metrics_data = {}
+    for key, m_name in [('rssi', 'RSSI'), ('rsrp', 'RSRP'), ('rsrq', 'RSRQ')]:
+        val = pd.to_numeric(latest[f'Athol.InfoHighDump.{key}'], errors='coerce')
+        label, color = get_metric_health(val, key)
+        metrics_data[key] = {
+            'content': [html.H3(m_name), html.H2(f"{val} dB" if not pd.isna(val) else "N/A"), html.P(label)],
+            'style': {'backgroundColor': color, 'color': 'white', 'padding': '10px', 'borderRadius': '10px', 'textAlign': 'center'}
+        }
+
+    # Graphs
+    rf_fig = go.Figure()
+    for col, name, c in [('rsrp', 'RSRP', '#3498db'), ('rsrq', 'RSRQ', '#9b59b6'), ('rssi', 'RSSI', '#1abc9c')]:
+        rf_fig.add_trace(go.Scatter(x=df['time'], y=pd.to_numeric(df[f'Athol.InfoHighDump.{col}'], errors='coerce'), name=name, line=dict(color=c)))
+    rf_fig.update_layout(title="Signal History", template="plotly_dark", height=350, margin=dict(l=20, r=20, t=40, b=20))
+
+    qual_fig = go.Figure()
+    qual_fig.add_trace(go.Scatter(x=df['time'], y=pd.to_numeric(df['Athol.InfoHighDump.latency_max_ms'], errors='coerce'), name="Latency", line=dict(color='#e67e22')))
+    qual_fig.update_layout(title="Latency History", template="plotly_dark", height=350, margin=dict(l=20, r=20, t=40, b=20))
+
+    return (metrics_data['rssi']['content'], metrics_data['rssi']['style'],
+            metrics_data['rsrp']['content'], metrics_data['rsrp']['style'],
+            metrics_data['rsrq']['content'], metrics_data['rsrq']['style'],
+            rf_fig, qual_fig)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8050, debug=False)

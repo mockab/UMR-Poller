@@ -1,0 +1,147 @@
+import dash
+from dash import dcc, html, Input, Output, dash_table
+import pandas as pd
+import plotly.graph_objs as go
+import numpy as np
+from datetime import datetime, timedelta
+import pytz
+
+app = dash.Dash(__name__)
+
+# Reference Table Data
+threshold_data = [
+    {"Metric": "RSSI", "Excellent": "> -60", "Good": "-70", "Weak": "-80", "Poor": "< -80"},
+    {"Metric": "RSRP", "Excellent": "> -80", "Good": "-90", "Weak": "-100", "Poor": "< -100"},
+    {"Metric": "RSRQ", "Excellent": "> -5", "Good": "-10", "Weak": "-15", "Poor": "< -15"},
+]
+
+def get_metric_health(val, metric):
+    if pd.isna(val): return "N/A", "#7f8c8d"
+    thresholds = {
+        'rsrp': [(-80, "Excellent", "#2ecc71"), (-90, "Good", "#27ae60"), (-100, "Weak", "#f1c40f")],
+        'rssi': [(-60, "Excellent", "#2ecc71"), (-70, "Good", "#27ae60"), (-80, "Weak", "#f1c40f")],
+        'rsrq': [(-5, "Excellent", "#2ecc71"), (-10, "Good", "#27ae60"), (-15, "Weak", "#f1c40f")]
+    }
+    for limit, label, color in thresholds[metric]:
+        if val > limit: return label, color
+    return "Poor", "#e74c3c"
+
+app.layout = html.Div([
+    # Dynamic Title
+    html.H1(id='dynamic-title', style={'textAlign': 'center', 'color': 'white'}),
+
+    # Time Filter Switch
+    html.Div([
+        dcc.RadioItems(
+            id='time-filter',
+            options=[
+                {'label': '1 Hour', 'value': '1H'},
+                {'label': '1 Day', 'value': '1D'},
+                {'label': 'All Time', 'value': 'ALL'}
+            ],
+            value='ALL', inline=True, style={'color': 'white', 'fontSize': '18px'}
+        )
+    ], style={'textAlign': 'center', 'marginBottom': '20px'}),
+
+    # Top Panel: Health Cards next to Reference Table
+    html.Div([
+        html.Div([
+            html.Div(id='rssi-card', style={'margin': '5px', 'flex': '1'}),
+            html.Div(id='rsrp-card', style={'margin': '5px', 'flex': '1'}),
+            html.Div(id='rsrq-card', style={'margin': '5px', 'flex': '1'}),
+        ], style={'flex': '1', 'display': 'flex', 'flexDirection': 'column'}),
+        
+        html.Div([
+            html.H4("Threshold Reference", style={'color': 'white', 'marginTop': '0'}),
+            dash_table.DataTable(
+                data=threshold_data,
+                columns=[{"name": i, "id": i} for i in threshold_data[0].keys()],
+                style_as_list_view=True,
+                style_header={'backgroundColor': '#1a1a1a', 'color': 'white', 'fontWeight': 'bold'},
+                style_cell={'backgroundColor': '#2c3e50', 'color': 'white', 'textAlign': 'center', 'fontSize': '13px'},
+            )
+        ], style={'flex': '1.5', 'margin': '5px', 'backgroundColor': '#2c3e50', 'padding': '15px', 'borderRadius': '10px'})
+    ], style={'display': 'flex', 'flexWrap': 'wrap', 'marginBottom': '20px'}),
+
+    dcc.Graph(id='rf-metrics-graph'),
+    dcc.Graph(id='quality-graph'),
+    
+    dcc.Interval(id='interval-component', interval=2000, n_intervals=0)
+], style={'backgroundColor': '#111111', 'minHeight': '100vh', 'padding': '20px'})
+
+@app.callback(
+    [Output('dynamic-title', 'children'),
+     Output('rssi-card', 'children'), Output('rssi-card', 'style'),
+     Output('rsrp-card', 'children'), Output('rsrp-card', 'style'),
+     Output('rsrq-card', 'children'), Output('rsrq-card', 'style'),
+     Output('rf-metrics-graph', 'figure'),
+     Output('quality-graph', 'figure')],
+    [Input('interval-component', 'n_intervals'),
+     Input('time-filter', 'value')]
+)
+def update_dashboard(n, time_range):
+    try:
+        df = pd.read_csv('output.csv').replace('n/a', np.nan)
+        
+        # UTC to EST Conversion
+        df['time'] = pd.to_datetime(df['Systemdate']).dt.tz_localize('UTC')
+        df['time'] = df['time'].dt.tz_convert('US/Eastern').dt.tz_localize(None)
+        
+        # Automatically Grab Site Name from column headers
+        # Looks for the first column with ".InfoHighDump" and takes the prefix
+        sample_col = [c for c in df.columns if ".InfoHighDump" in c]
+        site_name = sample_col[0].split('.')[0].upper() if sample_col else "LTE MONITOR"
+        display_title = f"{site_name} WAN MONITORING"
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return ["ERROR LOADING DATA"] + [dash.no_update] * 8
+
+    # Filtering Logic
+    now = df['time'].max()
+    if time_range == '1H':
+        df = df[df['time'] > now - timedelta(hours=1)]
+    elif time_range == '1D':
+        df = df[df['time'] > now - timedelta(days=1)]
+
+    if df.empty:
+        return [display_title] + [dash.no_update] * 8
+
+    latest = df.iloc[-1]
+    results = {}
+    
+    # Process Metrics with dynamic column matching
+    for key in ['rssi', 'rsrp', 'rsrq']:
+        col = next((c for c in df.columns if key in c.lower()), None)
+        val = pd.to_numeric(latest[col], errors='coerce') if col else np.nan
+        label, color = get_metric_health(val, key)
+        results[key] = {
+            'content': [html.H4(f"{key.upper()}: {val}", style={'margin': '0'})],
+            'style': {'backgroundColor': color, 'color': 'white', 'padding': '10px', 'borderRadius': '10px', 'textAlign': 'center', 'marginBottom': '5px'}
+        }
+
+    # Signal Graph (with uirevision)
+    rf_fig = go.Figure()
+    for key, name, c in [('rsrp', 'RSRP', '#3498db'), ('rsrq', 'RSRQ', '#9b59b6'), ('rssi', 'RSSI', '#1abc9c')]:
+        col = next((c_name for c_name in df.columns if key in c_name.lower()), None)
+        if col:
+            rf_fig.add_trace(go.Scatter(x=df['time'], y=pd.to_numeric(df[col], errors='coerce'), name=name, line=dict(color=c)))
+    
+    rf_fig.update_layout(title="Signal History (EST)", template="plotly_dark", height=350, uirevision='constant')
+
+    # Latency Graph (with uirevision)
+    lat_col = next((c for c in df.columns if 'latency_max_ms' in c.lower()), None)
+    qual_fig = go.Figure()
+    if lat_col:
+        qual_fig.add_trace(go.Scatter(x=df['time'], y=pd.to_numeric(df[lat_col], errors='coerce'), name="Latency", line=dict(color='#e67e22')))
+    
+    qual_fig.update_layout(title="Latency History (ms)", template="plotly_dark", height=350, uirevision='constant')
+
+    return (display_title,
+            results['rssi']['content'], results['rssi']['style'],
+            results['rsrp']['content'], results['rsrp']['style'],
+            results['rsrq']['content'], results['rsrq']['style'],
+            rf_fig, qual_fig)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8050, debug=False)
