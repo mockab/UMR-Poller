@@ -47,3 +47,7 @@ Metrics (all labelled `router="<name>"` matching the `name` in `config.yml`):
 | `umr_rx_channel` / `umr_tx_channel` | EARFCN |
 | `umr_lte_state_info{state="..."}` | Current LTE state, 1 on the active value |
 | `umr_band_info{band="..."}` | Currently active band(s), 1 on the active value (supports carrier-aggregation strings) |
+| `umr_download_usage_bytes_total` / `umr_upload_usage_bytes_total` / `umr_total_usage_bytes_total` | Cumulative bytes reported by the router. The device never auto-resets these (`reset_usage_timestamp` stays 0), so get "data used this month" via `increase(umr_total_usage_bytes_total[$__range])` with the Grafana time range set to "This month" rather than reading the raw value |
+| `umr_usage_reset_timestamp_seconds` | Unix timestamp the router last reset its usage counters (0 = never) |
+| `umr_client_count` / `umr_wifi_client_count` | Connected client counts |
+| `umr_cpu_percent` / `umr_memory_percent` | Router CPU/memory utilisation |

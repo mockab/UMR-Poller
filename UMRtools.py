@@ -26,6 +26,7 @@ class UMRrouter:
         self.status = 0
         self.infoLow = 0
         self.infoHigh = 0
+        self.infoMedium = 0
         self.infoClient = 0
 
         self.session.headers.update(
@@ -140,6 +141,11 @@ class UMRrouter:
         newInfoHigh = self.uimqttCall("InfoHighDump")
         if newInfoHigh != 0:
             self.infoHigh = newInfoHigh
+
+    def InfoMediumDump(self):
+        newInfoMedium = self.uimqttCall("InfoMediumDump")
+        if newInfoMedium != 0:
+            self.infoMedium = newInfoMedium
 
     def InfoClientDump(self):
         newInfoClient = self.uimqttCall("InfoClientDump")

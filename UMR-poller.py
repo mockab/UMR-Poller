@@ -52,6 +52,21 @@ UMR_TX_CHANNEL = Gauge('umr_tx_channel', 'Current tx channel (EARFCN)', ['router
 UMR_LTE_STATE = Gauge('umr_lte_state_info', 'Current LTE state (1 = active)', ['router', 'state'])
 UMR_BAND = Gauge('umr_band_info', 'Currently active LTE band(s) (1 = active)', ['router', 'band'])
 
+# From InfoMediumDump. download/upload/total_usage are cumulative byte
+# counters from the router (named *_total to signal counter semantics to
+# PromQL, even though they're set via Gauge.set() rather than Counter.inc()).
+# As of the device firmware these never auto-reset (reset_usage_timestamp
+# stays 0), so "data used this month" is `increase(...[$__range])` over a
+# Grafana time range of "This month" rather than reading the raw value.
+UMR_DOWNLOAD_USAGE = Gauge('umr_download_usage_bytes_total', 'Cumulative downloaded bytes reported by the router', ['router'])
+UMR_UPLOAD_USAGE = Gauge('umr_upload_usage_bytes_total', 'Cumulative uploaded bytes reported by the router', ['router'])
+UMR_TOTAL_USAGE = Gauge('umr_total_usage_bytes_total', 'Cumulative total bytes (download + upload) reported by the router', ['router'])
+UMR_USAGE_RESET_TIMESTAMP = Gauge('umr_usage_reset_timestamp_seconds', 'Unix timestamp the usage counters were last reset by the router (0 = never)', ['router'])
+UMR_CLIENT_COUNT = Gauge('umr_client_count', 'Number of clients connected to the router', ['router'])
+UMR_WIFI_CLIENT_COUNT = Gauge('umr_wifi_client_count', 'Number of wifi clients connected to the router', ['router'])
+UMR_CPU_PERCENT = Gauge('umr_cpu_percent', 'Router CPU utilisation percent', ['router'])
+UMR_MEMORY_PERCENT = Gauge('umr_memory_percent', 'Router memory utilisation percent', ['router'])
+
 def exc_hndlr(etype, value, tb):
     logger.critical(
         "Uncaught exception: {0}".format(str(value)),
@@ -300,6 +315,17 @@ def updateMetrics(target):
     if info.get('band') is not None:
         UMR_BAND.labels(router=target.name, band=str(info['band'])).set(1)
 
+    info_medium = target.infoMedium or {}
+    _setNumericMetric(UMR_DOWNLOAD_USAGE, target.name, info_medium.get('download_usage'))
+    _setNumericMetric(UMR_UPLOAD_USAGE, target.name, info_medium.get('upload_usage'))
+    _setNumericMetric(UMR_TOTAL_USAGE, target.name, info_medium.get('total_usage'))
+    if info_medium.get('reset_usage_timestamp') is not None:
+        UMR_USAGE_RESET_TIMESTAMP.labels(router=target.name).set(info_medium['reset_usage_timestamp'] / 1000)
+    _setNumericMetric(UMR_CLIENT_COUNT, target.name, info_medium.get('client_numbers'))
+    _setNumericMetric(UMR_WIFI_CLIENT_COUNT, target.name, info_medium.get('wifi_clients'))
+    _setNumericMetric(UMR_CPU_PERCENT, target.name, info_medium.get('cpu'))
+    _setNumericMetric(UMR_MEMORY_PERCENT, target.name, info_medium.get('memory'))
+
 def logItemsFromTarget(target, logItems):
     if target.authState > 0:
         logItems.append(target.infoHigh['signal_level'])
@@ -323,6 +349,7 @@ def pollTarget(target):
 
     if target.authState > 0:
         target.InfoHighDump()
+        target.InfoMediumDump()
 
 def iterateLoop():
     logItems = []
