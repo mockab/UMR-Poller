@@ -21,9 +21,17 @@ from http.client import HTTPConnection
 from csv_logger import CsvLogger
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
-from prometheus_client import start_http_server, Gauge
+from prometheus_client import start_http_server, Gauge, REGISTRY, PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR
 
 from UMRtools import UMRrouter
+
+# Drop the default process/gc/platform collectors prometheus_client registers
+# on import -- they're more than half the scrape payload and unused here.
+# Several Pi sites reach this exporter over their own metered LTE uplink, so
+# scrape size matters.
+for _collector in (PROCESS_COLLECTOR, PLATFORM_COLLECTOR, GC_COLLECTOR):
+    with contextlib.suppress(KeyError):
+        REGISTRY.unregister(_collector)
 
 # Prometheus metrics. Registered unconditionally; only exposed over HTTP if
 # metricsEnable is set, mirroring how gpsdEnable/sslWarnDisable gate features.
