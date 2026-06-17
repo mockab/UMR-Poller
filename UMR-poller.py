@@ -13,7 +13,7 @@ Description  : %HERE%
 """
 
 import argparse, logging, os, sys
-import json, requests, yaml, ssl
+import json, requests, yaml, ssl, time
 import schedule, threading
 from pathlib import Path
 import contextlib
@@ -21,8 +21,28 @@ from http.client import HTTPConnection
 from csv_logger import CsvLogger
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
+from prometheus_client import start_http_server, Gauge
 
 from UMRtools import UMRrouter
+
+# Prometheus metrics. Registered unconditionally; only exposed over HTTP if
+# metricsEnable is set, mirroring how gpsdEnable/sslWarnDisable gate features.
+UMR_UP = Gauge('umr_router_up', 'Whether the last poll of this router succeeded (authState > 0)', ['router'])
+UMR_LAST_POLL = Gauge('umr_last_poll_timestamp_seconds', 'Unix timestamp of the last successful poll', ['router'])
+UMR_SIGNAL_LEVEL = Gauge('umr_signal_level', 'Signal level reported by InfoHighDump', ['router'])
+UMR_LATENCY_MAX_MS = Gauge('umr_latency_max_ms', 'Max latency in ms over the polling window', ['router'])
+UMR_LATENCY_PACKET_LOSS = Gauge('umr_latency_packet_loss_count', 'Packet loss count over the polling window', ['router'])
+UMR_RSSI = Gauge('umr_rssi_dbm', 'RSSI in dBm', ['router'])
+UMR_RSRQ = Gauge('umr_rsrq_db', 'RSRQ in dB', ['router'])
+UMR_RSRP = Gauge('umr_rsrp_dbm', 'RSRP in dBm', ['router'])
+UMR_RX_CHANNEL = Gauge('umr_rx_channel', 'Current rx channel (EARFCN)', ['router'])
+UMR_TX_CHANNEL = Gauge('umr_tx_channel', 'Current tx channel (EARFCN)', ['router'])
+# lte_state and band are descriptive strings (band supports carrier-aggregation
+# combos), so they're exposed NUT-status-flag style: one time series per
+# possible value, set to 1 for the currently active one. Cleared and rebuilt
+# every iterateLoop() so a changed value doesn't leave a stale "1" behind.
+UMR_LTE_STATE = Gauge('umr_lte_state_info', 'Current LTE state (1 = active)', ['router', 'state'])
+UMR_BAND = Gauge('umr_band_info', 'Currently active LTE band(s) (1 = active)', ['router', 'band'])
 
 def exc_hndlr(etype, value, tb):
     logger.critical(
@@ -120,6 +140,20 @@ def parse_args():
         type=str,
         default='./output/output.csv',
         help='set output file, default is ./output/output.csv')
+    parser.add_argument(
+        '--metricsEnable',
+        nargs='?',
+        const=1,
+        type=_str2bool,
+        default=False,
+        help='Enable Prometheus /metrics HTTP endpoint')
+    parser.add_argument(
+        '--metricsPort',
+        nargs='?',
+        const=1,
+        type=int,
+        default=9101,
+        help='Port for the Prometheus /metrics HTTP endpoint, default 9101')
 
     return parser.parse_known_args()
 
@@ -229,6 +263,35 @@ def debug_requests_off():
     requests_log.setLevel(logging.WARNING)
     requests_log.propagate = False
 
+def _setNumericMetric(gauge, router, value):
+    try:
+        gauge.labels(router=router).set(float(value))
+    except (TypeError, ValueError):
+        logger.debug(f"Metric {gauge._name} for {router}: non-numeric value {value!r}, skipping")
+
+def updateMetrics(target):
+    if target.authState <= 0:
+        UMR_UP.labels(router=target.name).set(0)
+        return
+
+    UMR_UP.labels(router=target.name).set(1)
+    UMR_LAST_POLL.labels(router=target.name).set(time.time())
+
+    info = target.infoHigh
+    _setNumericMetric(UMR_SIGNAL_LEVEL, target.name, info.get('signal_level'))
+    _setNumericMetric(UMR_LATENCY_MAX_MS, target.name, info.get('latency_max_ms'))
+    _setNumericMetric(UMR_LATENCY_PACKET_LOSS, target.name, info.get('latency_packet_loss_count'))
+    _setNumericMetric(UMR_RSSI, target.name, info.get('rssi'))
+    _setNumericMetric(UMR_RSRQ, target.name, info.get('rsrq'))
+    _setNumericMetric(UMR_RSRP, target.name, info.get('rsrp'))
+    _setNumericMetric(UMR_RX_CHANNEL, target.name, info.get('rx_channel'))
+    _setNumericMetric(UMR_TX_CHANNEL, target.name, info.get('tx_channel'))
+
+    if info.get('lte_state') is not None:
+        UMR_LTE_STATE.labels(router=target.name, state=str(info['lte_state'])).set(1)
+    if info.get('band') is not None:
+        UMR_BAND.labels(router=target.name, band=str(info['band'])).set(1)
+
 def logItemsFromTarget(target, logItems):
     if target.authState > 0:
         logItems.append(target.infoHigh['signal_level'])
@@ -276,8 +339,12 @@ def iterateLoop():
             logItems.append('n/a')
             logItems.append('n/a')
 
+    UMR_LTE_STATE.clear()
+    UMR_BAND.clear()
+
     for target in pollingTargets:
             logItemsFromTarget(target, logItems)
+            updateMetrics(target)
 
     logger.debug(f'New output entry: {logItems}')
     csvlogger.logData(logItems)
@@ -298,6 +365,8 @@ def main():
     maxWorkerThreads = 3
     global scheduleDelay
     scheduleDelay = 15
+    metricsEnable = args.metricsEnable
+    metricsPort = args.metricsPort
 
     global pollingTargets
     pollingTargets = []
@@ -324,6 +393,10 @@ def main():
                     maxWorkerThreads = globalOptions['maxWorkerThreads']
                 if "schedule" in globalOptions:
                     scheduleDelay = globalOptions['schedule']
+                if "metricsEnable" in globalOptions:
+                    metricsEnable = globalOptions['metricsEnable']
+                if "metricsPort" in globalOptions:
+                    metricsPort = globalOptions['metricsPort']
 
     if sslWarnDisable:
         logger.info('sslWarnDisable set to True, disabling InsecureRequestWarning')
@@ -378,6 +451,10 @@ def main():
                           max_size=max_size,
                           max_files=max_files,
                           header=header)
+
+    if metricsEnable:
+        logger.info(f'Starting Prometheus /metrics endpoint on port {metricsPort}')
+        start_http_server(metricsPort)
 
     try:
         schedule.every(scheduleDelay).seconds.do(run_threaded, iterateLoop)

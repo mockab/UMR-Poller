@@ -20,3 +20,30 @@ A real-time, interactive signal monitoring dashboard designed for Raspberry Pi. 
 ### Prerequisites
 Ensure your system is running the collector from [UMR-Poller](https://github.com/skutov/UMR-Poller) and generating an `output.csv`.
 Install requirements.txt
+
+## Prometheus metrics
+
+`UMR-poller.py` can expose the same signal/latency data read by the dashboard as a Prometheus `/metrics` endpoint, so a remote Grafana can scrape it directly instead of (or alongside) the CSV/Dash UI.
+
+Enable it in `config.yml`:
+
+```yaml
+global:
+  metricsEnable: True
+  metricsPort: 9101 # default
+```
+
+or via CLI flags: `--metricsEnable --metricsPort 9101`.
+
+Metrics (all labelled `router="<name>"` matching the `name` in `config.yml`):
+
+| Metric | Meaning |
+|---|---|
+| `umr_router_up` | 1 if the last poll succeeded (`authState > 0`), else 0 |
+| `umr_last_poll_timestamp_seconds` | Unix time of the last successful poll |
+| `umr_signal_level` | Signal level |
+| `umr_rssi_dbm` / `umr_rsrq_db` / `umr_rsrp_dbm` | RF signal quality |
+| `umr_latency_max_ms` / `umr_latency_packet_loss_count` | Latency check results |
+| `umr_rx_channel` / `umr_tx_channel` | EARFCN |
+| `umr_lte_state_info{state="..."}` | Current LTE state, 1 on the active value |
+| `umr_band_info{band="..."}` | Currently active band(s), 1 on the active value (supports carrier-aggregation strings) |

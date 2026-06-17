@@ -8,3 +8,4 @@ schedule
 gpsd-py3
 csv-logger
 pytz
+prometheus-client

@@ -10,6 +10,8 @@ global:
   gpsdEnable: False # Change to false to disable gpsd connection
   maxWorkerThreads: 3 # Set maximum number of threads for polling UMR targets, default 3
   schedule: 15 # Seconds to wait between each polling attempt
+  metricsEnable: True # Expose a Prometheus /metrics endpoint for scraping
+  metricsPort: 9101 # Port for the /metrics endpoint
 routers:
   - name: SiteName
     ipAddr: 10.69.64.254
